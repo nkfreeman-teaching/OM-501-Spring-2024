@@ -7,7 +7,7 @@ def generate_random_tsp_data(
     random_seed: int = 42,
 ) -> dict:
     '''
-    Generates a ranom set of locations and distances between locations for use
+    Generates a random set of locations and distances between locations for use
     as input data for a traveling salesman problem.
     '''
 
@@ -52,7 +52,8 @@ def generate_random_tsp_data(
 def generate_tsp_plot(
     coordinates_df: pd.DataFrame,
     tour_list: list = [],
-    label_cities: bool = True,
+    label_locations: bool = True,
+    figsize_tuple: tuple = (5, 5),
 ) -> None:
     '''
     Generates plot for TSP instance.
@@ -60,12 +61,12 @@ def generate_tsp_plot(
     Arguments
      - coordinates_df - pandas DataFrame containing location coordinates
      - tour_list - a list specifying a tour covering the locations
-     - label_cities - boolean defining whether or not to label locations
+     - label_locations - boolean defining whether or not to label locations
     '''
 
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    fig, ax = plt.subplots(1, 1, figsize=figsize_tuple)
 
     coordinates_df.plot(
         kind='scatter',
@@ -77,7 +78,7 @@ def generate_tsp_plot(
 
     ax.spines[['right', 'top']].set_visible(False)
 
-    if label_cities:
+    if label_locations:
         coordinate_dicts = coordinates_df.to_dict(orient='index')
         for customer, coordinate_dict in coordinate_dicts.items():
             ax.annotate(
@@ -86,15 +87,16 @@ def generate_tsp_plot(
                 )
 
     if tour_list:
+        coordinate_dicts = coordinates_df.to_dict(orient='index')
         x_list, y_list = [], []
-        for city_idx, city in enumerate(tour_list[:-1], 0):
+        for location_idx, location in enumerate(tour_list[:-1], 0):
             x_list.append([
-                coordinate_dicts[city]['x'],
-                coordinate_dicts[tour_list[city_idx+1]]['x'],
+                coordinate_dicts[location]['x'],
+                coordinate_dicts[tour_list[location_idx+1]]['x'],
                 ])
             y_list.append([
-                coordinate_dicts[city]['y'],
-                coordinate_dicts[tour_list[city_idx+1]]['y'],
+                coordinate_dicts[location]['y'],
+                coordinate_dicts[tour_list[location_idx+1]]['y'],
                 ])
         x_list.append([
             coordinate_dicts[tour_list[-1]]['x'],
@@ -113,7 +115,10 @@ def generate_tsp_plot(
     plt.show()
 
 
-def subtour_elimination(gurobi_model, where) -> None:
+def subtour_elimination(
+    gurobi_model,
+    where,
+) -> None:
 
     if where == gurobipy.GRB.callback.MIPSOL:
 
@@ -149,8 +154,9 @@ def subtour_elimination(gurobi_model, where) -> None:
 def solve_tsp(
     locations: list,
     distance_dict: dict,
-    warmstart_tour: list = [],
+    warmstarts: list = [],
     time_limit_seconds: int = 60,
+    verbose: bool = True,
 ) -> dict:
 
     model = gurobipy.Model('TSP')
@@ -162,6 +168,8 @@ def solve_tsp(
         name='X',
     )
     model.setParam('TimeLimit', time_limit_seconds)
+    if not verbose:
+        model.setParam('OutputFlag', 0)
 
     total_cost = gurobipy.LinExpr()
     for i in locations:
@@ -187,10 +195,22 @@ def solve_tsp(
     for i in locations:
         model.addConstr(X[i, i] == 0)
 
-    if warmstart_tour:
-        for stop_idx, stop in enumerate(warmstart_tour[:-1]):
-            X[stop, warmstart_tour[stop_idx+1]].start = 1
-        X[warmstart_tour[-1], warmstart_tour[0]].start = 1
+    if warmstarts:
+        if isinstance(warmstarts[0], list):
+            model.NumStart = len(warmstarts)
+            model.update()
+
+            for warmstart_index, warmstart in enumerate(warmstarts):
+                model.params.StartNumber = warmstart_index
+
+                for stop_idx, stop in enumerate(warmstart[:-1]):
+                    X[stop, warmstart[stop_idx+1]].start = 1
+                X[warmstart[-1], warmstart[0]].start = 1
+
+        else:
+            for stop_idx, stop in enumerate(warmstarts[:-1]):
+                X[stop, warmstarts[stop_idx+1]].start = 1
+            X[warmstarts[-1], warmstarts[0]].start = 1
 
     model._vars = X
     model._locations = locations
@@ -221,3 +241,42 @@ def convert_tsp_X_to_tour(
                 break
 
     return tour
+
+
+def get_tour_distance(
+    tour_list: list,
+    distance_dict: dict,
+) -> float:
+
+    distance = 0
+    for stop_idx, stop in enumerate(tour_list[:-1]):
+        distance += distance_dict[stop, tour_list[stop_idx+1]]
+    distance += distance_dict[tour_list[-1], tour_list[0]]
+
+    return distance
+
+
+def get_nearest_neighbor_tour(
+    locations_list: list,
+    origin: int,
+    distance_dict: dict,
+) -> float:
+    import numpy as np
+
+    NN_sequence = [origin]
+    unvisited = set(locations_list) - set(NN_sequence)
+
+    while unvisited:
+        closest_neighbor = None
+        minimum_distance = np.inf
+
+        for potential_destination in unvisited:
+            if distance_dict[origin, potential_destination] < minimum_distance:
+                closest_neighbor = potential_destination
+                minimum_distance = distance_dict[origin, potential_destination]
+
+        NN_sequence.append(closest_neighbor)
+        unvisited = set(locations_list) - set(NN_sequence)
+        origin = closest_neighbor
+
+    return NN_sequence
