@@ -1,6 +1,6 @@
-*
-
-!optutilities
+*.ipynb
+datasets/
+project/
 
 
 # Byte-compiled / optimized / DLL files
